@@ -85,8 +85,9 @@ jobs:
         if: ${{ needs.release.outputs.last_release_git_head == '' || steps.changes.outputs.plugin == 'true' }}
         env:
           RELEASE_VERSION: ${{ needs.release.outputs.new_release_version }}
+          PLUGIN: ${{ matrix.plugin }}
         run: |
-          sed -i -e "s/'version':\s'.*'/'version': '$RELEASE_VERSION'/g" azuremonitor.manifest
+          sed -i -e "s/'version':\s'.*'/'version': '$RELEASE_VERSION'/g" $PLUGIN/$PLUGIN.manifest
 
       - name: Build MKP
         if: steps.changes.outputs.plugin == 'true'
