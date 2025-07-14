@@ -69,23 +69,12 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
 
-      - name: Get base commit
-        id: base
-        env:
-          LAST_RELEASE_GIT_HEAD: ${{ needs.release.outputs.last_release_git_head }}
-        run: |
-          if [[ -z $LAST_RELEAS_GIT_HEAD ]]; then
-            first_commit=$(git log --pretty=format:%H | tail -1)
-            echo "ref=${first_commit}" >> $GITHUB_OUTPUT
-          else
-            echo "ref=${LAST_RELEASE_GIT_HEAD}" >> $GITHUB_OUTPUT
-          fi
-
       - name: Check plugin changed
         uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
+        if: needs.release.outputs.last_release_git_head != ''
         id: changes
         with:
-          base: ${{ steps.base.outputs.ref }}
+          base: ${{ needs.release.outputs.last_release_git_head }}
           filters: |
             plugin:
               - '${{ matrix.plugin }}/**'
@@ -93,7 +82,7 @@ jobs:
         # the manifest has an hardcoded version, we don't really want
         # to update it every time we commit...
       - name: Substitute version in manifest
-        if: steps.changes.outputs.plugin == 'true'
+        if: ${{ needs.release.outputs.last_release_git_head == '' || steps.changes.outputs.plugin == 'true' }}
         env:
           RELEASE_VERSION: ${{ needs.release.outputs.new_release_version }}
         run: |
@@ -116,7 +105,7 @@ jobs:
           sudo chmod -R 0777 .packages
 
       - name: Publish MKP in releases
-        if: steps.changes.outputs.plugin == 'true'
+        if: ${{ needs.release.outputs.last_release_git_head == '' || steps.changes.outputs.plugin == 'true' }}
         env:
           RELEASE_TAG: ${{ needs.release.outputs.new_release_git_tag }}
           RELEASE_VERSION: ${{ needs.release.outputs.new_release_version }}
