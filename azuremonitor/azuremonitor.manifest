@@ -1,0 +1,13 @@
+{'author': 'Tommaso Rossi <tommaso.rossi@pagopa.it>',
+ 'description': 'Query Azure Monitor logs',
+ 'download_url': 'https://github.com/pagopa/checkmk-azure-monitor/releases/latest',
+ 'files': {'cmk_addons_plugins': ['azuremonitor/agent_based/azuremonitor.py',
+                                  'azuremonitor/libexec/agent_azuremonitor',
+                                  'azuremonitor/rulesets/special_agent.py',
+                                  'azuremonitor/server_side_calls/special_agent.py']},
+ 'name': 'azuremonitor',
+ 'title': 'Azure Monitor',
+ 'version': 'x.x.x',
+ 'version.min_required': '2.2.0p37',
+ 'version.packaged': 'cmk-mkp-tool 0.2.0',
+ 'version.usable_until': None}

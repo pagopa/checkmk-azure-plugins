@@ -1,0 +1,13 @@
+{'author': 'Tommaso Rossi <tommaso.rossi@pagopa.it>',
+ 'description': 'Monitor Azure Functions execution',
+ 'download_url': 'https://github.com/pagopa/checkmk-azure-functionapp/releases/latest',
+ 'files': {'cmk_addons_plugins': ['azurefunctions/agent_based/azurefunctions.py',
+                                  'azurefunctions/libexec/agent_azurefunctions',
+                                  'azurefunctions/rulesets/special_agent.py',
+                                  'azurefunctions/server_side_calls/special_agent.py']},
+ 'name': 'azurefunctions',
+ 'title': 'Azure Functions',
+ 'version': '1.1.0',
+ 'version.min_required': '2.2.0p37',
+ 'version.packaged': 'cmk-mkp-tool 0.2.0',
+ 'version.usable_until': None}

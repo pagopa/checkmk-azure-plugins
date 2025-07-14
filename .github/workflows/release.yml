@@ -1,0 +1,106 @@
+name: Release
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - 'CODEOWNERS'
+      - '**.md'
+      - '.**'
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-24.04
+
+    permissions:
+      contents: write
+      issues: write
+      packages: write
+      pull-requests: write
+
+    outputs:
+      new_release_version: ${{ steps.release.outputs.new_release_version }}
+      new_release_published: ${{ steps.release.outputs.new_release_published }}
+      new_release_git_tag: ${{ steps.release.outputs.new_release_git_tag }}
+
+    steps:
+      - name: Checkout
+        id: checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Release
+        id: release
+        uses: cycjimmy/semantic-release-action@b1b432f13acb7768e0c8efdec416d363a57546f2 # v4.1.1
+        with:
+          semantic_version: 24.2.0
+          extra_plugins: |
+            @semantic-release/release-notes-generator@14.0.1
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+  publish:
+    name: Publish
+    runs-on: ubuntu-24.04
+    needs: release
+    if: needs.release.outputs.new_release_published == 'true'
+
+    strategy:
+      fail-fast: false
+      matrix:
+        plugin:
+          - azuremonitor
+          - azurefunctions
+
+    permissions:
+      contents: write
+      issues: write
+
+    steps:
+      - name: Check plugin changed
+        uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
+        id: changes
+        with:
+          filters: |
+            plugin:
+              - '${{ matrix.plugin }}/**'
+      
+        # the manifest has an hardcoded version, we don't really want
+        # to update it every time we commit...
+      - name: Substitute version in manifest
+        if: steps.changes.outputs.plugin == 'true'
+        env:
+          RELEASE_VERSION: ${{ needs.release.outputs.new_release_version }}
+        run: |
+          sed -i -e "s/'version':\s'.*'/'version': '$RELEASE_VERSION'/g" azuremonitor.manifest
+
+      - name: Build MKP
+        if: steps.changes.outputs.plugin == 'true'
+        env:
+          PLUGIN: ${{ matrix.plugin }}
+        run: |
+          mkdir -p .packages
+          chmod -R 0777 .
+          docker run \
+            --rm \
+            -v $(pwd)/${PLUGIN}/${PLUGIN}:/opt/omd/sites/cmk/local/lib/python3/cmk_addons/plugins/${PLUGIN} \
+            -v $(pwd)/${PLUGIN}/${PLUGIN}.manifest:/manifests/${PLUGIN}.manifest \
+            -v $(pwd)/.packages/:/omd/sites/cmk/var/check_mk/packages_local/ \
+            ghcr.io/pagopa/checkmk-mkp:latest \
+            package /manifests/${PLUGIN}.manifest
+          sudo chmod -R 0777 .packages
+
+      - name: Publish MKP in releases
+        if: steps.changes.outputs.plugin == 'true'
+        env:
+          RELEASE_TAG: ${{ needs.release.outputs.new_release_git_tag }}
+          RELEASE_VERSION: ${{ needs.release.outputs.new_release_version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "$RELEASE_TAG" ".packages/$PLUGIN-$RELEASE_VERSION.mkp"
+

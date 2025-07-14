@@ -1,0 +1,239 @@
+#!/usr/bin/env python3
+"""Azure Function App check for CheckMK.
+
+It allows to query function invocations in App Insights and raise
+alerts based on invocation count and/or invocation failures.
+
+In the CheckMK "special agent" framework, this file is responsible to
+perform the actual check against the external system, format the
+output and print it with standard separators to the stdout.
+
+This script is launched by CheckMK in a language independent way
+(hence the need of the shebang), with command line arguments computed
+by server_side_calls/special_agent.py.
+
+That output will be then taken by the agent_based/azurefunctions.py.
+
+"""
+
+import argparse
+import json
+import os
+import requests
+
+from azure.identity import ClientSecretCredential
+from azure.identity import AzureCliCredential
+
+#
+# parse cli arguments
+#
+
+parser = argparse.ArgumentParser("agent_azurefunctions")
+parser.add_argument(
+    '--tenant-id',
+    required=False,
+    type=str,
+    help='Azure Tenant ID',
+)
+parser.add_argument(
+    '--client-id',
+    required=False,
+    type=str,
+    help='Client ID of the Azure service principal',
+)
+parser.add_argument(
+    '--client-secret',
+    required=False,
+    type=str,
+    help='Client secret of the Azure service principal',
+)
+parser.add_argument(
+    '--appinsights-app-id',
+    required=True,
+    type=str,
+    help='App ID of the Azure App Insights resource',
+)
+parser.add_argument(
+    '--functionapp-name',
+    required=True,
+    type=str,
+    help='Name of the Function App resource in Azure',
+)
+parser.add_argument(
+    '--function-name',
+    required=True,
+    type=str,
+    help='Name of the Function in the Function App',
+)
+parser.add_argument(
+    '--timedelta-kql',
+    required=True,
+    type=str,
+    help='Log timedelta in KQL expression (e.g. 1d = 1 day, 6h = 6 hours, ...')
+parser.add_argument(
+    '--count-warn-lower',
+    required=False,
+    type=int,
+    default=None,
+    help='Lower threshold for invocations count that should issue a warning',
+)
+parser.add_argument(
+    '--count-warn-upper',
+    required=False,
+    type=int,
+    default=None,
+    help='Upper threshold for invocations count that should issue a warning',
+)
+parser.add_argument(
+    '--count-crit-lower',
+    required=False,
+    type=int,
+    default=None,
+    help='Lower threshold for invocations count that should issue a critical',
+)
+parser.add_argument(
+    '--count-crit-upper',
+    required=False,
+    type=int,
+    default=None,
+    help='Upper threshold for invocations count that should issue a critical',
+)
+parser.add_argument(
+    '--failure-warn-lower',
+    required=False,
+    type=int,
+    default=0,
+    help='Lower threshold for failures count that should issue a warning',
+)
+parser.add_argument(
+    '--failure-warn-upper',
+    required=False,
+    type=int,
+    default=None,
+    help='Upper threshold for failures count that should issue a warning',
+)
+parser.add_argument(
+    '--failure-crit-lower',
+    required=False,
+    type=int,
+    default=None,
+    help='Lower threshold for failures count that should issue a critical',
+)
+parser.add_argument(
+    '--failure-crit-upper',
+    required=False,
+    type=int,
+    default=None,
+    help='Upper threshold for failures count that should issue a critical',
+)
+parser.add_argument(
+    '--proxy',
+    required=False,
+    type=str,
+    default=None,
+    help='Proxy requests, for example https://my.proxy:8080',
+)
+parser.add_argument(
+    '--use-cli-credentials',
+    required=False,
+    default=False,
+    action='store_true',
+    help='Debug for local development with Az CLI credentials',
+)
+args = parser.parse_args()
+
+#
+# login and execute log analytics workspace query
+#
+
+if args.proxy:
+    # set proxy via environment:
+    # https://learn.microsoft.com/en-us/azure/developer/python/sdk/azure-sdk-configure-proxy?tabs=bash#set-in-python-code
+    os.environ["HTTP_PROXY"] = args.proxy
+    os.environ["HTTPS_PROXY"] = args.proxy
+    proxies = {
+        'http': args.proxy,
+        'https': args.proxy,
+    }
+else:
+    proxies = None
+
+if args.use_cli_credentials:
+    credential = AzureCliCredential()
+else:
+    credential = ClientSecretCredential(
+        tenant_id=args.tenant_id,
+        client_id=args.client_id,
+        client_secret=args.client_secret,
+    )
+
+query = f"""requests
+| extend altFuncName = tostring(customDimensions["faas.name"])
+| project
+    timestamp,
+    id,
+    operation_Name,
+    success,
+    resultCode,
+    duration,
+    operation_Id,
+    altFuncName,
+    cloud_RoleName,
+    invocationId=coalesce(
+        tostring(customDimensions["InvocationId"]),
+        tostring(customDimensions["faas.invocation_id"])
+    )
+| where timestamp > ago({args.timedelta_kql})
+| where cloud_RoleName =~ '{args.functionapp_name}'
+| where operation_Name =~ '{args.function_name}' or altFuncName =~ '{args.function_name}'
+| order by timestamp desc
+| take 20
+"""
+
+appinsights_baseurl = 'https://api.applicationinsights.io'
+token = credential.get_token(f'{appinsights_baseurl}/.default').token
+headers = {'Authorization': f'Bearer {token}'}
+params = {"query": query}
+url = f'{appinsights_baseurl}/v1/apps/{args.appinsights_app_id}/query'
+
+try:
+    response = requests.get(url,
+                            headers=headers,
+                            params=params,
+                            proxies=proxies)
+    response.raise_for_status()
+    logs = response.json()
+except Exception as e:
+    try:
+        errmsg = "error: " + json.dumps(response.json().get('error', {}))
+    except Exception:
+        errmsg = "error: %s - %s" % (type(e).__name__, str(e))
+    raise Exception(errmsg) from e
+
+log_lines_json = []
+cols = [c['name'] for c in logs['tables'][0]['columns']]
+for row in logs['tables'][0]['rows']:
+    structured = dict(zip(cols, row))
+    log_lines_json.append(structured)
+
+print('<<<azurefunctions:sep(0)>>>')
+print(
+    json.dumps({
+        'warn_lower': args.count_warn_lower,
+        'warn_upper': args.count_warn_upper,
+        'crit_lower': args.count_crit_lower,
+        'crit_upper': args.count_crit_upper,
+    }))
+print('<<<azurefunctions:sep(1)>>>')
+print(
+    json.dumps({
+        'warn_lower': args.failure_warn_lower,
+        'warn_upper': args.failure_warn_upper,
+        'crit_lower': args.failure_crit_lower,
+        'crit_upper': args.failure_crit_upper,
+    }))
+print('<<<azurefunctions:sep(2)>>>')
+for log in log_lines_json:
+    print(json.dumps(log))
+
+# next step: output is parsed and interpreted by agent_based/azurefunctions.py

@@ -1,0 +1,166 @@
+#!/usr/bin/env python3
+"""Azure Monitor check for CheckMK.
+
+It allows to query logs in Log Analytics Workspace regarding a
+particular resource, and return a CheckMK status based on the count of
+the logs.
+
+The query is in the Kusto language.  See more in the docs:
+https://learn.microsoft.com/en-us/azure/azure-monitor/logs/get-started-queries?tabs=kql
+
+In the CheckMK "special agent" framework, this file is responsible to
+perform the actual check against the external system, format the
+output and print it with standard separators to the stdout.
+
+This script is launched by CheckMK in a language independent way
+(hence the need of the shebang), with command line arguments computed
+by server_side_calls/special_agent.py.
+
+That output will be then taken by the agent_based/azuremonitor.py.
+
+"""
+
+import argparse
+from datetime import timedelta
+import json
+import os
+
+from azure.identity import ClientSecretCredential
+from azure.monitor.query import LogsQueryClient
+from azure.monitor.query import LogsQueryStatus
+
+#
+# parse cli arguments
+#
+
+parser = argparse.ArgumentParser("agent_azuremonitor")
+parser.add_argument(
+    '--tenant-id',
+    required=True,
+    type=str,
+    help='Azure Tenant ID',
+)
+parser.add_argument(
+    '--client-id',
+    required=True,
+    type=str,
+    help='Client ID of the Azure service principal',
+)
+parser.add_argument(
+    '--client-secret',
+    required=True,
+    type=str,
+    help='Client secret of the Azure service principal',
+)
+parser.add_argument(
+    '--resource-id',
+    required=True,
+    type=str,
+    help='Azure Resource ID to query logs',
+)
+parser.add_argument(
+    '--query',
+    required=True,
+    type=str,
+    help='Log Analytics Query',
+)
+parser.add_argument(
+    '--timedelta-seconds',
+    required=True,
+    type=str,
+    help='Log timedelta in seconds',
+)
+parser.add_argument(
+    '--count-warn',
+    required=False,
+    type=int,
+    default=0,
+    help='Number of log records found that should issue a warning alert',
+)
+parser.add_argument(
+    '--count-crit',
+    required=False,
+    type=int,
+    default=1,
+    help='Number of log records found that should issue a critical alert',
+)
+parser.add_argument(
+    '--proxy',
+    required=False,
+    type=str,
+    default=None,
+    help='Proxy requests to Azure Monitor, for example https://my.proxy:8080',
+)
+args = parser.parse_args()
+
+tenant_id = args.tenant_id
+client_id = args.client_id
+client_secret = args.client_secret
+resource_id = args.resource_id
+# this is because we replaced newline with this placeholder in rulesets
+kusto_query = args.query.replace('___cmk_azuremonitor_newline___', '\n')
+timespan = timedelta(seconds=int(args.timedelta_seconds))
+count_warn = args.count_warn
+count_crit = args.count_crit
+proxy = args.proxy
+
+#
+# login and execute log analytics workspace query
+#
+
+if proxy:
+    # set proxy via environment:
+    # https://learn.microsoft.com/en-us/azure/developer/python/sdk/azure-sdk-configure-proxy?tabs=bash#set-in-python-code
+    # seem to work the "per client" method in the docs above does not
+    # work for LogsQueryClient
+    os.environ["HTTP_PROXY"] = proxy
+    os.environ["HTTPS_PROXY"] = proxy
+
+credential = ClientSecretCredential(
+    tenant_id=tenant_id,
+    client_id=client_id,
+    client_secret=client_secret,
+)
+proxies = {
+    'http': proxy,
+    'https': proxy,
+} if proxy else None
+client = LogsQueryClient(credential, proxies=proxies)
+response = client.query_resource(resource_id, kusto_query, timespan=timespan)
+
+if response.status != LogsQueryStatus.SUCCESS:
+    raise Exception("Unknown error querying log analytics workspace")
+
+#
+# process response
+#
+
+if response.tables:
+    # table has properties: "columns" (list of column names) and
+    #  "rows" (list, each row is a log, each log is a list with same
+    #  indexing as "columns")
+
+    # let's assume table is one? probably multiple is for batch
+    table = response.tables[0]
+
+    # list whose elements are a string json representation of the log entry
+    logs = [
+        json.dumps({table.columns[i]: row[i]
+                    for i in range(len(row))},
+                   default=str) for row in table.rows
+    ]
+else:
+    logs = []
+
+# print plugin output to stdout
+#
+
+print('<<<azuremonitor:sep(0)>>>')
+print(args.count_warn)
+print('<<<azuremonitor:sep(1)>>>')
+print(args.count_crit)
+print('<<<azuremonitor:sep(2)>>>')
+for log in logs:
+    print(log)
+
+# next step: output is parsed and interpreted by agent_based/azuremonitor.py
