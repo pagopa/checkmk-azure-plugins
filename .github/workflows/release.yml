@@ -110,6 +110,7 @@ jobs:
         env:
           RELEASE_TAG: ${{ needs.release.outputs.new_release_git_tag }}
           RELEASE_VERSION: ${{ needs.release.outputs.new_release_version }}
+          PLUGIN: ${{ matrix.plugin }}
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release upload "$RELEASE_TAG" ".packages/$PLUGIN-$RELEASE_VERSION.mkp"
