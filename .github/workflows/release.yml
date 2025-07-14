@@ -90,7 +90,7 @@ jobs:
           sed -i -e "s/'version':\s'.*'/'version': '$RELEASE_VERSION'/g" $PLUGIN/$PLUGIN.manifest
 
       - name: Build MKP
-        if: steps.changes.outputs.plugin == 'true'
+        if: ${{ needs.release.outputs.last_release_git_head == '' || steps.changes.outputs.plugin == 'true' }}
         env:
           PLUGIN: ${{ matrix.plugin }}
         run: |
