@@ -25,6 +25,7 @@ jobs:
       new_release_version: ${{ steps.release.outputs.new_release_version }}
       new_release_published: ${{ steps.release.outputs.new_release_published }}
       new_release_git_tag: ${{ steps.release.outputs.new_release_git_tag }}
+      last_release_git_head: ${{ steps.release.outputs.last_release_git_head }}
 
     steps:
       - name: Checkout
@@ -72,6 +73,7 @@ jobs:
         uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
         id: changes
         with:
+          base: ${{ needs.release.outputs.last_release_git_head }}
           filters: |
             plugin:
               - '${{ matrix.plugin }}/**'
