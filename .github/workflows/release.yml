@@ -69,11 +69,23 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
 
+      - name: Get base commit
+        id: base
+        env:
+          LAST_RELEASE_GIT_HEAD: ${{ needs.release.outputs.last_release_git_head }}
+        run: |
+          if [[ -z $LAST_RELEAS_GIT_HEAD ]]; then
+            first_commit=$(git log --pretty=format:%H | tail -1)
+            echo "ref=${first_commit}" >> $GITHUB_OUTPUT
+          else
+            echo "ref=${LAST_RELEASE_GIT_HEAD}" >> $GITHUB_OUTPUT
+          fi
+
       - name: Check plugin changed
         uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
         id: changes
         with:
-          base: ${{ needs.release.outputs.last_release_git_head }}
+          base: ${{ steps.base.outputs.ref }}
           filters: |
             plugin:
               - '${{ matrix.plugin }}/**'
