@@ -99,25 +99,11 @@ parser.add_argument(
     help='Upper threshold for invocations count that should issue a critical',
 )
 parser.add_argument(
-    '--failure-warn-lower',
-    required=False,
-    type=int,
-    default=0,
-    help='Lower threshold for failures count that should issue a warning',
-)
-parser.add_argument(
     '--failure-warn-upper',
     required=False,
     type=int,
     default=None,
     help='Upper threshold for failures count that should issue a warning',
-)
-parser.add_argument(
-    '--failure-crit-lower',
-    required=False,
-    type=int,
-    default=None,
-    help='Lower threshold for failures count that should issue a critical',
 )
 parser.add_argument(
     '--failure-crit-upper',
@@ -227,9 +213,7 @@ print(
 print('<<<azurefunctions:sep(1)>>>')
 print(
     json.dumps({
-        'warn_lower': args.failure_warn_lower,
         'warn_upper': args.failure_warn_upper,
-        'crit_lower': args.failure_crit_lower,
         'crit_upper': args.failure_crit_upper,
     }))
 print('<<<azurefunctions:sep(2)>>>')

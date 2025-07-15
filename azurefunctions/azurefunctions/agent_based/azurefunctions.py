@@ -66,9 +66,7 @@ def check_azurefunctions(section):
         count_wu = count_thresholds.get('warn_upper', None) or float('inf')
         count_cl = count_thresholds.get('crit_lower', None) or -1
         count_cu = count_thresholds.get('crit_upper', None) or float('inf')
-        failure_wl = failure_thresholds.get('warn_lower', None) or -1
         failure_wu = failure_thresholds.get('warn_upper', None) or float('inf')
-        failure_cl = failure_thresholds.get('crit_lower', None) or -1
         failure_cu = failure_thresholds.get('crit_upper', None) or float('inf')
 
         invocs = len(logs)
@@ -84,11 +82,11 @@ def check_azurefunctions(section):
 
         if invocs >= count_cu or invocs <= count_cl:
             state = State.CRIT
-        elif failures >= failure_cu or failures <= failure_cl:
+        elif failures >= failure_cu:
             state = State.CRIT
         elif invocs >= count_wu or invocs <= count_wl:
             state = State.WARN
-        elif failures >= failure_wu or failures <= failure_wl:
+        elif failures >= failure_wu:
             state = State.WARN
         else:
             state = State.OK

@@ -38,15 +38,9 @@ def _agent_arguments(params, host_config):
     if params.get('failure_crit_upper', None):
         args.append("--failure-crit-upper")
         args.append(str(params['failure_crit_upper']))
-    if params.get('failure_crit_lower', None):
-        args.append("--failure-crit-lower")
-        args.append(str(params['failure_crit_lower']))
     if params.get('failure_warn_upper', None):
         args.append("--failure-warn-upper")
         args.append(str(params['failure_warn_upper']))
-    if params.get('failure_warn_lower', None):
-        args.append("--failure-warn-lower")
-        args.append(str(params['failure_warn_lower']))
     if params.get('proxy', None):
         args.append("--proxy")
         args.append(str(params['proxy']))

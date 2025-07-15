@@ -141,16 +141,6 @@ def _formspec():
                                    "that should issue a critical alert"),
                 ),
             ),
-            "failure_crit_lower":
-            DictElement(
-                required=False,
-                parameter_form=Integer(
-                    title=Title(
-                        "Critical lower threshold for execution failure"),
-                    help_text=Help("Lower threshold for invocations failure "
-                                   "that should issue a critical alert"),
-                ),
-            ),
             "failure_warn_upper":
             DictElement(
                 required=False,
@@ -158,16 +148,6 @@ def _formspec():
                     title=Title(
                         "Warning upper threshold for execution failure"),
                     help_text=Help("Upper threshold for invocations failure "
-                                   "that should issue a warning alert"),
-                ),
-            ),
-            "failure_warn_lower":
-            DictElement(
-                required=False,
-                parameter_form=Integer(
-                    title=Title(
-                        "Warning lower threshold for execution failure"),
-                    help_text=Help("Lower threshold for invocations failure "
                                    "that should issue a warning alert"),
                 ),
             ),
