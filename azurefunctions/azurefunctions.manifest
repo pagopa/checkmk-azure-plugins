@@ -7,7 +7,7 @@
                                   'azurefunctions/server_side_calls/special_agent.py']},
  'name': 'azurefunctions',
  'title': 'Azure Functions',
- 'version': '1.1.0',
+ 'version': 'x.x.x',
  'version.min_required': '2.2.0p37',
  'version.packaged': 'cmk-mkp-tool 0.2.0',
  'version.usable_until': None}

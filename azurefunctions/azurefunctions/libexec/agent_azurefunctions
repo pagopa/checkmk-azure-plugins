@@ -203,6 +203,8 @@ for row in logs['tables'][0]['rows']:
     log_lines_json.append(structured)
 
 print('<<<azurefunctions:sep(0)>>>')
+print(f"{args.functionapp_name} - {args.function_name}")
+print('<<<azurefunctions:sep(1)>>>')
 print(
     json.dumps({
         'warn_lower': args.count_warn_lower,
@@ -210,13 +212,13 @@ print(
         'crit_lower': args.count_crit_lower,
         'crit_upper': args.count_crit_upper,
     }))
-print('<<<azurefunctions:sep(1)>>>')
+print('<<<azurefunctions:sep(2)>>>')
 print(
     json.dumps({
         'warn_upper': args.failure_warn_upper,
         'crit_upper': args.failure_crit_upper,
     }))
-print('<<<azurefunctions:sep(2)>>>')
+print('<<<azurefunctions:sep(3)>>>')
 for log in log_lines_json:
     print(json.dumps(log))
 

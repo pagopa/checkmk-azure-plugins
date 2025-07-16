@@ -5,6 +5,7 @@ from cmk.agent_based.v2 import CheckPlugin
 from cmk.agent_based.v2 import Service
 from cmk.agent_based.v2 import Result
 from cmk.agent_based.v2 import State
+from cmk.agent_based.v2 import check_levels
 from cmk.utils import debug
 from pprint import pprint
 import json
@@ -20,11 +21,13 @@ def parse_azurefunctions(string_table):
         # flatten the list because it has every element wrapped in another list
         input_list = list(chain.from_iterable(string_table))
 
-        count_thresholds_dict = input_list[0]
-        failure_thresholds_dict = input_list[1]
-        logs = input_list[2:]
+        name = input_list[0]
+        count_thresholds_dict = input_list[1]
+        failure_thresholds_dict = input_list[2]
+        logs = input_list[3:]
 
         parsed = {
+            'name': name,
             'logs': logs,
             'count_thresholds': json.loads(count_thresholds_dict),
             'failure_thresholds': json.loads(failure_thresholds_dict),
@@ -36,6 +39,7 @@ def parse_azurefunctions(string_table):
             pprint(parsed)
     except Exception as e:
         parsed = {
+            'name': 'UNKNOWN',
             'logs': [f'parsing failed: {e}'],
             'count_thresholds': {},
             'failure_thresholds': {},
@@ -46,10 +50,10 @@ def parse_azurefunctions(string_table):
 
 
 def discover_azurefunctions(section):
-    yield Service()
+    yield Service(item=section.get('name'))
 
 
-def check_azurefunctions(section):
+def check_azurefunctions(item, section):
     try:
         logs = section['logs']
         if section['error']:
@@ -60,38 +64,61 @@ def check_azurefunctions(section):
             )
             return
 
-        count_thresholds = section['count_thresholds']
-        failure_thresholds = section['failure_thresholds']
-        count_wl = count_thresholds.get('warn_lower', None) or -1
-        count_wu = count_thresholds.get('warn_upper', None) or float('inf')
-        count_cl = count_thresholds.get('crit_lower', None) or -1
-        count_cu = count_thresholds.get('crit_upper', None) or float('inf')
-        failure_wu = failure_thresholds.get('warn_upper', None) or float('inf')
-        failure_cu = failure_thresholds.get('crit_upper', None) or float('inf')
-
         invocs = len(logs)
-        dictlogs = [json.loads(log) for log in logs]
-        failures = len([
-            log for log in dictlogs if log.get('success') != 'True'
-            or log.get('resultCode') not in ['0', '200']
-        ])
 
-        logs_summary = f"{invocs} invocations with {failures} failures"
+        failures = 0
+        duration_accu = 0
+        for log in logs:
+            dictlog = json.loads(log)
+            if dictlog.get('success') != 'True' \
+               or dictlog.get('resultCode') not in ['0', '200']:
+                failures += 1
+            duration_accu += float(dictlog.get('duration', 0))
 
-        log_str = '\n'.join(logs) if logs else None
+        duration_avg = duration_accu / invocs if invocs > 0 else 0
 
-        if invocs >= count_cu or invocs <= count_cl:
-            state = State.CRIT
-        elif failures >= failure_cu:
-            state = State.CRIT
-        elif invocs >= count_wu or invocs <= count_wl:
-            state = State.WARN
-        elif failures >= failure_wu:
-            state = State.WARN
-        else:
-            state = State.OK
+        ct = section.get('count_thresholds', {})
+        ft = section.get('failure_thresholds', {})
 
-        yield Result(state=state, summary=logs_summary, details=log_str)
+        def _level(warn, crit):
+            if not crit:
+                return None
+            return ("fixed", (warn or crit, crit))
+
+        def _fmt_duration(millis):
+            if millis > 2000:
+                secs = millis / 1000
+                return "%.3f s" % secs
+            return "%d ms" % int(millis)
+
+        yield from check_levels(
+            invocs,
+            label="Invocations",
+            metric_name="invocations",
+            levels_lower=(_level(ct.get('warn_lower', None),
+                                 ct.get('crit_lower', None))),
+            levels_upper=(_level(ct.get('warn_upper', None),
+                                 ct.get('crit_upper', None))),
+            render_func=lambda v: "%d" % int(v),
+        )
+
+        yield from check_levels(
+            failures,
+            label="Failures",
+            metric_name="failures",
+            levels_upper=(_level(ft.get('warn_upper', None),
+                                 ft.get('crit_upper', None))),
+            render_func=lambda v: "%d" % int(v),
+        )
+
+        yield from check_levels(
+            duration_avg,
+            label="Duration",
+            metric_name="duration",
+            render_func=_fmt_duration,
+        )
+
+
     except Exception as e:
         yield Result(
             state=State.UNKNOWN,
@@ -107,7 +134,7 @@ agent_section_azurefunctions = AgentSection(
 
 check_plugin_myhostgroups = CheckPlugin(
     name="azurefunctions",
-    service_name="Azure Function invocations and failures",
+    service_name="Azure Function %s",
     discovery_function=discover_azurefunctions,
     check_function=check_azurefunctions,
 )
