@@ -176,7 +176,6 @@ async def query_appinsights():
     appinsights_baseurl = 'https://api.applicationinsights.io'
     token = await credential.get_token(f'{appinsights_baseurl}/.default')
     headers = {'Authorization': f'Bearer {token.token}'}
-    await credential.close()
     params = {"query": query}
     url = f'{appinsights_baseurl}/v1/apps/{args.appinsights_app_id}/query'
 
@@ -211,6 +210,7 @@ async def main():
     print(json.dumps(disc))
     for log in logs:
         print(json.dumps(log))
+    await credential.close()
 
 
 if __name__ == "__main__":
