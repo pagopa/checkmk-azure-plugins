@@ -37,6 +37,22 @@ def _formspec():
                     help_text=Help("ID of the Azure tenant"),
                 ),
             ),
+            "subscription_id":
+            DictElement(
+                required=True,
+                parameter_form=String(
+                    title=Title("Azure Subscription ID"),
+                    help_text=Help("ID of the Azure subscription"),
+                ),
+            ),
+            "resource_group":
+            DictElement(
+                required=True,
+                parameter_form=String(
+                    title=Title("Azure Resource Group"),
+                    help_text=Help("Name of the Azure resource group"),
+                ),
+            ),
             "client_id":
             DictElement(
                 required=True,
@@ -64,25 +80,6 @@ def _formspec():
                                    "resource > Configure > API Access"),
                 ),
             ),
-            "functionapp_name":
-            DictElement(
-                required=True,
-                parameter_form=String(
-                    title=Title("Name of the Azure Function App"),
-                    help_text=Help("Name of the Azure Function App resource"),
-                ),
-            ),
-            "function_name":
-            DictElement(
-                required=True,
-                parameter_form=String(
-                    title=Title("Name of the function in the Function App"),
-                    help_text=Help("Name of the function deployed in the "
-                                   "Function App, also known as \"operation\"."
-                                   " Get it in the Function App Overview page "
-                                   "under Functions tab"),
-                ),
-            ),
             "timedelta_kql":
             DictElement(
                 required=True,
@@ -91,64 +88,6 @@ def _formspec():
                     help_text=Help(
                         "Time delta in the past to query in App Insights. "
                         "Expressed as KQL expression. Examples: 1d, 8.5h, 9m"),
-                ),
-            ),
-            "count_crit_upper":
-            DictElement(
-                required=False,
-                parameter_form=Integer(
-                    title=Title(
-                        "Critical upper threshold for execution count"),
-                    help_text=Help("Upper threshold for invocations count "
-                                   "that should issue a critical alert"),
-                ),
-            ),
-            "count_crit_lower":
-            DictElement(
-                required=False,
-                parameter_form=Integer(
-                    title=Title(
-                        "Critical lower threshold for execution count"),
-                    help_text=Help("Lower threshold for invocations count "
-                                   "that should issue a critical alert"),
-                ),
-            ),
-            "count_warn_upper":
-            DictElement(
-                required=False,
-                parameter_form=Integer(
-                    title=Title("Warning upper threshold for execution count"),
-                    help_text=Help("Upper threshold for invocations count "
-                                   "that should issue a warning alert"),
-                ),
-            ),
-            "count_warn_lower":
-            DictElement(
-                required=False,
-                parameter_form=Integer(
-                    title=Title("Warning lower threshold for execution count"),
-                    help_text=Help("Lower threshold for invocations count "
-                                   "that should issue a warning alert"),
-                ),
-            ),
-            "failure_crit_upper":
-            DictElement(
-                required=False,
-                parameter_form=Integer(
-                    title=Title(
-                        "Critical upper threshold for execution failure"),
-                    help_text=Help("Upper threshold for invocations failure "
-                                   "that should issue a critical alert"),
-                ),
-            ),
-            "failure_warn_upper":
-            DictElement(
-                required=False,
-                parameter_form=Integer(
-                    title=Title(
-                        "Warning upper threshold for execution failure"),
-                    help_text=Help("Upper threshold for invocations failure "
-                                   "that should issue a warning alert"),
                 ),
             ),
             "proxy":

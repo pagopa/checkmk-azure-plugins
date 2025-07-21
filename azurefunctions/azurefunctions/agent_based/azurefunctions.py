@@ -11,6 +11,9 @@ from pprint import pprint
 import json
 import traceback
 from itertools import chain
+from datetime import datetime, timezone
+
+from croniter import croniter
 
 
 def parse_azurefunctions(string_table):
@@ -21,16 +24,13 @@ def parse_azurefunctions(string_table):
         # flatten the list because it has every element wrapped in another list
         input_list = list(chain.from_iterable(string_table))
 
-        name = input_list[0]
-        count_thresholds_dict = input_list[1]
-        failure_thresholds_dict = input_list[2]
-        logs = input_list[3:]
+        apps = input_list[0]
+        logs = input_list[1:]
+        dictlogs = [json.loads(log) for log in logs]
 
         parsed = {
-            'name': name,
-            'logs': logs,
-            'count_thresholds': json.loads(count_thresholds_dict),
-            'failure_thresholds': json.loads(failure_thresholds_dict),
+            'apps': json.loads(apps),
+            'logs': dictlogs,
             'error': None,
         }
 
@@ -39,10 +39,8 @@ def parse_azurefunctions(string_table):
             pprint(parsed)
     except Exception as e:
         parsed = {
-            'name': 'UNKNOWN',
+            'apps': {},
             'logs': [f'parsing failed: {e}'],
-            'count_thresholds': {},
-            'failure_thresholds': {},
             'error': traceback.format_exc(),
         }
 
@@ -50,13 +48,102 @@ def parse_azurefunctions(string_table):
 
 
 def discover_azurefunctions(section):
-    yield Service(item=section.get('name'))
+    # yeld one service per function in each function app
+    for appname, funcs in section.get('apps').items():
+        for func in funcs:
+            yield Service(item=f"{appname} - {func['name']}")
+
+
+def _check_failures_and_duration(funcspec, funclogs):
+    ninvocs = len(funclogs)
+
+    failures = 0
+    duration_accu = 0
+    for log in funclogs:
+        if log.get('success') != 'True' \
+           or log.get('resultCode') not in ['0', '200']:
+            failures += 1
+        duration_accu += float(log.get('duration', 0))
+
+    duration_avg = duration_accu / ninvocs if ninvocs > 0 else 0
+
+    def _fmt_duration(millis):
+        if millis > 2000:
+            secs = millis / 1000
+            return "%.3f s" % secs
+        return "%d ms" % int(millis)
+
+    yield from check_levels(
+        failures,
+        label="Failures",
+        metric_name="failures",
+        levels_upper=("fixed", (1, 2)),
+        render_func=lambda v: "%d" % int(v),
+    )
+
+    yield from check_levels(
+        duration_avg,
+        label="Duration",
+        metric_name="duration",
+        render_func=_fmt_duration,
+    )
+
+
+def _check_scheduled_invocations(funcspec, funclogs):
+    if funcspec['type'] != "timerTrigger":
+        # this check applies only to timer trigger funcs
+        return
+
+    clock_skew_crit_secs = 120  # TODO config
+    clock_skew_warn_secs = 60  # TODO config
+
+    def _match_timestamp(log, expected_timestamp, skew_secs):
+        timestamp = datetime.fromisoformat(log['timestamp'])
+        diff = expected_timestamp - timestamp
+        return abs(diff.total_seconds()) < skew_secs
+
+    funccron = funcspec['schedule']
+    base = datetime.now(timezone.utc)
+    itr = croniter(funccron, base, second_at_beginning=True)
+    expected = itr.get_prev(datetime)
+
+    matching_log = None
+    for log in funclogs:
+        if _match_timestamp(log, expected, clock_skew_crit_secs):
+            matching_log = log
+            break
+
+    if not matching_log:
+        # outside crit level skew tolerance
+        yield Result(
+            state=State.CRIT,
+            summary="Missed scheduled invocation",
+            details="Invocation expected at %s (CRON: %s)" %
+            (expected, funccron),
+        )
+    elif _match_timestamp(matching_log, expected, clock_skew_warn_secs):
+        # within tolerance
+        yield Result(
+            state=State.OK,
+            summary="Scheduled invocation fired",
+            details="Invoked at %s, expected at %s (CRON: %s)" %
+            (matching_log['timestamp'], expected, funccron),
+        )
+    else:
+        # outside warn level skew tolerance
+        yield Result(
+            state=State.WARN,
+            summary="Skew in scheduled invocation",
+            details="Invoked at %s, expected at %s (CRON: %s)" %
+            (matching_log['timestamp'], expected, funccron),
+        )
 
 
 def check_azurefunctions(item, section):
     try:
-        logs = section['logs']
+        logs = section.get('logs')
         if section['error']:
+            # these are errors in parsing phase
             yield Result(
                 state=State.UNKNOWN,
                 summary=logs,
@@ -64,61 +151,19 @@ def check_azurefunctions(item, section):
             )
             return
 
-        invocs = len(logs)
+        [appname, funcname] = item.split(" - ")
 
-        failures = 0
-        duration_accu = 0
-        for log in logs:
-            dictlog = json.loads(log)
-            if dictlog.get('success') != 'True' \
-               or dictlog.get('resultCode') not in ['0', '200']:
-                failures += 1
-            duration_accu += float(dictlog.get('duration', 0))
+        funcs = section.get('apps', {}).get(appname)
+        func = [func for func in funcs if func['name'] == funcname][0]
 
-        duration_avg = duration_accu / invocs if invocs > 0 else 0
+        funclogs = [
+            log for log in logs
+            if log['cloud_RoleName'] == appname
+            and log['operation_Name'] == funcname
+        ]
 
-        ct = section.get('count_thresholds', {})
-        ft = section.get('failure_thresholds', {})
-
-        def _level(warn, crit):
-            if not crit:
-                return None
-            return ("fixed", (warn or crit, crit))
-
-        def _fmt_duration(millis):
-            if millis > 2000:
-                secs = millis / 1000
-                return "%.3f s" % secs
-            return "%d ms" % int(millis)
-
-        yield from check_levels(
-            invocs,
-            label="Invocations",
-            metric_name="invocations",
-            levels_lower=(_level(ct.get('warn_lower', None),
-                                 ct.get('crit_lower', None))),
-            levels_upper=(_level(ct.get('warn_upper', None),
-                                 ct.get('crit_upper', None))),
-            render_func=lambda v: "%d" % int(v),
-        )
-
-        yield from check_levels(
-            failures,
-            label="Failures",
-            metric_name="failures",
-            levels_upper=(_level(ft.get('warn_upper', None),
-                                 ft.get('crit_upper', None))),
-            render_func=lambda v: "%d" % int(v),
-        )
-
-        yield from check_levels(
-            duration_avg,
-            label="Duration",
-            metric_name="duration",
-            render_func=_fmt_duration,
-        )
-
-
+        yield from _check_failures_and_duration(func, funclogs)
+        yield from _check_scheduled_invocations(func, funclogs)
     except Exception as e:
         yield Result(
             state=State.UNKNOWN,
