@@ -99,12 +99,9 @@ if args.proxy:
     # https://learn.microsoft.com/en-us/azure/developer/python/sdk/azure-sdk-configure-proxy?tabs=bash#set-in-python-code
     os.environ["HTTP_PROXY"] = args.proxy
     os.environ["HTTPS_PROXY"] = args.proxy
-    proxies = {
-        'http': args.proxy,
-        'https': args.proxy,
-    }
+    proxy = args.proxy
 else:
-    proxies = None
+    proxy = None
 
 if args.use_cli_credentials:
     credential = AzureCliCredential()
@@ -181,7 +178,7 @@ async def query_appinsights():
 
     try:
         async with aiohttp.ClientSession(headers=headers) as session:
-            async with session.get(url, params=params) as resp:
+            async with session.get(url, params=params, proxy=proxy) as resp:
                 resp.raise_for_status()
                 logs = await resp.json()
     except Exception as e:
