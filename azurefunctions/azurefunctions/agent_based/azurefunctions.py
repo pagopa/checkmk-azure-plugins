@@ -54,32 +54,13 @@ def discover_azurefunctions(section):
             yield Service(item=f"{appname} - {func['name']}")
 
 
-def _check_failures_and_duration(funcspec, funclogs):
-    ninvocs = len(funclogs)
-
-    failures = 0
-    duration_accu = 0
-    for log in funclogs:
-        if log.get('success') != 'True' \
-           or log.get('resultCode') not in ['0', '200']:
-            failures += 1
-        duration_accu += float(log.get('duration', 0))
-
-    duration_avg = duration_accu / ninvocs if ninvocs > 0 else 0
+def _check_duration(duration_avg):
 
     def _fmt_duration(millis):
         if millis > 2000:
             secs = millis / 1000
             return "%.3f s" % secs
         return "%d ms" % int(millis)
-
-    yield from check_levels(
-        failures,
-        label="Failures",
-        metric_name="failures",
-        levels_upper=("fixed", (1, 2)),
-        render_func=lambda v: "%d" % int(v),
-    )
 
     yield from check_levels(
         duration_avg,
@@ -89,54 +70,95 @@ def _check_failures_and_duration(funcspec, funclogs):
     )
 
 
+def _check_http_invocations(funcspec, funclogs):
+    failures = 0
+    duration_accu = 0
+    for log in funclogs:
+        if log.get('success') != 'True' \
+           or int(log.get('resultCode')) > 399:
+            failures += 1
+        duration_accu += float(log.get('duration', 0))
+
+    yield from check_levels(
+        failures,
+        label="Failures",
+        metric_name="failures",
+        levels_upper=("fixed", (1, 2)),
+        render_func=lambda v: "%d" % int(v),
+    )
+
+    ninvocs = len(funclogs)
+    duration_avg = duration_accu / ninvocs if ninvocs > 0 else 0
+    yield from _check_duration(duration_avg)
+
+
 def _check_scheduled_invocations(funcspec, funclogs):
-    if funcspec['type'] != "timerTrigger":
-        # this check applies only to timer trigger funcs
-        return
-
-    clock_skew_crit_secs = 120  # TODO config
-    clock_skew_warn_secs = 60  # TODO config
-
-    def _match_timestamp(log, expected_timestamp, skew_secs):
-        timestamp = datetime.fromisoformat(log['timestamp'])
-        diff = expected_timestamp - timestamp
-        return abs(diff.total_seconds()) < skew_secs
+    clock_skew_secs = 60
+    delay_warn_secs = 120  # TODO config
+    delay_crit_secs = 240  # TODO config
 
     funccron = funcspec['schedule']
-    base = datetime.now(timezone.utc)
-    itr = croniter(funccron, base, second_at_beginning=True)
-    expected = itr.get_prev(datetime)
+    now = datetime.now(timezone.utc)
+    itr = croniter(funccron, now, second_at_beginning=True)
+    schedule = itr.get_prev(datetime)
 
+    duration_accu = 0
+    nfailures = 0
     matching_log = None
+    success_log = None
     for log in funclogs:
-        if _match_timestamp(log, expected, clock_skew_crit_secs):
-            matching_log = log
-            break
+        success = log.get('success') == 'True' and log.get('resultCode') == '0'
+        if not success:
+            nfailures += 1
+        duration_accu += float(log.get('duration', 0))
+        timestamp = datetime.fromisoformat(log['timestamp'])
+        diff_secs = (timestamp - schedule).total_seconds()
 
-    if not matching_log:
-        # outside crit level skew tolerance
-        yield Result(
-            state=State.CRIT,
-            summary="Missed scheduled invocation",
-            details="Invocation expected at %s (CRON: %s)" %
-            (expected, funccron),
-        )
-    elif _match_timestamp(matching_log, expected, clock_skew_warn_secs):
-        # within tolerance
+        if diff_secs + clock_skew_secs > 0:
+            # execution log is after expected schedule (considering clock skew)
+            if diff_secs < delay_crit_secs:
+                # execution log is considered matching the expected schedule
+                matching_log = log
+            if success:
+                # there is a successful invocation after schedule: we
+                # consider schedule in sync.  this can be different
+                # from the log that matched the schedule, e.g. if
+                # schedule execution failed and then the function was
+                # ran manually
+                success_log = log
+
+    if matching_log:
         yield Result(
             state=State.OK,
             summary="Scheduled invocation fired",
             details="Invoked at %s, expected at %s (CRON: %s)" %
-            (matching_log['timestamp'], expected, funccron),
+            (matching_log['timestamp'], schedule, funccron),
         )
     else:
-        # outside warn level skew tolerance
+        warn = (now - schedule).total_seconds() < delay_warn_secs
         yield Result(
-            state=State.WARN,
-            summary="Skew in scheduled invocation",
-            details="Invoked at %s, expected at %s (CRON: %s)" %
-            (matching_log['timestamp'], expected, funccron),
+            state=State.WARN if warn else State.CRIT,
+            summary="Missed scheduled invocation",
+            details="Invocation expected at %s (CRON: %s)" %
+            (schedule, funccron),
         )
+
+    if success_log:
+        yield Result(
+            state=State.OK if nfailures == 0 else State.WARN,
+            summary="Schedule in sync",
+            details=f"Schedule is in sync with {nfailures} previous failures",
+        )
+    else:
+        yield Result(
+            state=State.CRIT,
+            summary="Schedule out of sync",
+            details=f"Schedule out of sync with {nfailures} current failures",
+        )
+
+    ninvocs = len(funclogs)
+    duration_avg = duration_accu / ninvocs if ninvocs > 0 else 0
+    yield from _check_duration(duration_avg)
 
 
 def check_azurefunctions(item, section):
@@ -157,13 +179,21 @@ def check_azurefunctions(item, section):
         func = [func for func in funcs if func['name'] == funcname][0]
 
         funclogs = [
-            log for log in logs
-            if log['cloud_RoleName'] == appname
+            log for log in logs if log['cloud_RoleName'] == appname
             and log['operation_Name'] == funcname
         ]
 
-        yield from _check_failures_and_duration(func, funclogs)
-        yield from _check_scheduled_invocations(func, funclogs)
+        if func['type'] == "timerTrigger":
+            yield from _check_scheduled_invocations(func, funclogs)
+        elif func['type'] == "httpTrigger":
+            yield from _check_http_invocations(func, funclogs)
+        else:
+            yield Result(
+                state=State.UNKNOWN,
+                summary=f"Unsupported function trigger: {func['type']}",
+                details=traceback.format_exc(),
+            )
+
     except Exception as e:
         yield Result(
             state=State.UNKNOWN,
