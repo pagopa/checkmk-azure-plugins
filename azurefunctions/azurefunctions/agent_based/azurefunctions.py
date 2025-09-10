@@ -145,7 +145,7 @@ def _check_scheduled_invocations(funcspec, funclogs):
 
     if success_log:
         yield Result(
-            state=State.OK if nfailures == 0 else State.WARN,
+            state=State.OK,
             summary="Schedule in sync",
             details=f"Schedule is in sync with {nfailures} previous failures",
         )
