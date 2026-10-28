@@ -116,7 +116,7 @@ def _formspec():
             ),
             "custom_summary":
             DictElement(
-                required=True,
+                required=False,
                 parameter_form=String(
                     title=Title("Custom summary message"),
                     help_text=Help(
