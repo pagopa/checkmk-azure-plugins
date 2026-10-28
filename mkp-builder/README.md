@@ -6,6 +6,20 @@ Building CheckMK packages
 provides the `mkp` executable as a container without the need of a
 full running CheckMK.
 
+The builder uses **Checkmk Community 2.5.0p14**, pinned to the same image digest
+as the [local environment](../tests/compose/README.md). The base image is amd64;
+Apple Silicon requires amd64 emulation.
+
+## Publishing
+
+The **Publish MKP builder** workflow rebuilds and publishes
+`ghcr.io/pagopa/checkmk-mkp:latest` when this directory changes on `main`.
+It can also be started manually.
+
+Publish the updated builder before triggering a plugin release. The builder
+and release workflows run independently: changing both in the same push does
+not guarantee that the release will use the new builder.
+
 ## Usage
 
 Run in the project root (or in another plugin to be packaged with similar folder structure).

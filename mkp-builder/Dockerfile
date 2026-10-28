@@ -1,7 +1,7 @@
 # This image is for building mkp packages, not for running a CheckMK instance.
 # For details see: https://docs.checkmk.com/latest/en/mkps.html#_adding_an_mkp
 
-FROM checkmk/check-mk-raw:2.3.0-latest@sha256:d218b6d12561e2067981a8eb08b72b7cfb1287a1ae8b7a15c40b2cc7046002a7
+FROM checkmk/check-mk-community:2.5.0p14@sha256:940b52a6983b61c64c217ebee81f62a41011850e2873ef8d8fa1c1af1bea40f5
 
 # no problem about the admin password, this is just for building the mkp
 RUN omd create --no-tmpfs -u 1000 -g 1000 --admin-password cmkadmin "$CMK_SITE_ID"
