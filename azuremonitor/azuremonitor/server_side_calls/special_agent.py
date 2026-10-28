@@ -45,7 +45,7 @@ def _agent_arguments(params, host_config):
     yield SpecialAgentCommand(command_arguments=args)
 
 
-special_agent_hellospecial = SpecialAgentConfig(
+special_agent_azuremonitor = SpecialAgentConfig(
     name="azuremonitor",
     parameter_parser=noop_parser,
     commands_function=_agent_arguments

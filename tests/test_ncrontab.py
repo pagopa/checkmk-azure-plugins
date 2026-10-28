@@ -121,6 +121,13 @@ class TimerCheckTests(unittest.TestCase):
         with patch.dict(self.check.__globals__, {"datetime": self.clock}):
             return list(self.check({"schedule": schedule}, logs))
 
+    def test_functions_exports_expected_plugin_symbol(self):
+        self.assertIs(
+            self.plugin["check_plugin_azurefunctions"],
+            self.modules["cmk.agent_based.v2"].CheckPlugin.return_value,
+        )
+        self.assertNotIn("check_plugin_myhostgroups", self.plugin)
+
     def test_functions_parser_without_internal_debug_module(self):
         parse = self.plugin["parse_azurefunctions"]
         self.assertEqual(parse([['{"app": []}'], ['{"success": "True"}']]), {
@@ -136,7 +143,13 @@ class TimerCheckTests(unittest.TestCase):
             / "azuremonitor/azuremonitor/agent_based/azuremonitor.py"
         )
         with patch.dict(sys.modules, self.modules):
-            parse = runpy.run_path(str(path))["parse_azuremonitor"]
+            plugin = runpy.run_path(str(path))
+        self.assertIs(
+            plugin["check_plugin_azuremonitor"],
+            self.modules["cmk.agent_based.v2"].CheckPlugin.return_value,
+        )
+        self.assertNotIn("check_plugin_myhostgroups", plugin)
+        parse = plugin["parse_azuremonitor"]
         self.assertEqual(parse([["1"], ["2"], ["log entry"]]), {
             "logs": ["log entry"], "count_warn": 1, "count_crit": 2, "error": None,
         })

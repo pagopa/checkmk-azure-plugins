@@ -209,7 +209,7 @@ agent_section_azurefunctions = AgentSection(
     parse_function=parse_azurefunctions,
 )
 
-check_plugin_myhostgroups = CheckPlugin(
+check_plugin_azurefunctions = CheckPlugin(
     name="azurefunctions",
     service_name="Azure Function %s",
     discovery_function=discover_azurefunctions,

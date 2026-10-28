@@ -89,7 +89,7 @@ agent_section_azuremonitor = AgentSection(
     parse_function=parse_azuremonitor,
 )
 
-check_plugin_myhostgroups = CheckPlugin(
+check_plugin_azuremonitor = CheckPlugin(
     name="azuremonitor",
     service_name="Azure Monitor logs and metrics",
     discovery_function=discover_azuremonitor,

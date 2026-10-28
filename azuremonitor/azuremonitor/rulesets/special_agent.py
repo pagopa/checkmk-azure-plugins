@@ -130,7 +130,7 @@ def _formspec():
         })
 
 
-rule_spec_hellospecial = SpecialAgent(
+rule_spec_azuremonitor = SpecialAgent(
     topic=Topic.CLOUD,
     name="azuremonitor",
     title=Title("Azure Monitor logs and metrics"),

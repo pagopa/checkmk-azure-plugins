@@ -119,7 +119,7 @@ def _formspec():
         })
 
 
-rule_spec_hellospecial = SpecialAgent(
+rule_spec_azurefunctions = SpecialAgent(
     topic=Topic.CLOUD,
     name="azurefunctions",
     title=Title("Azure Functions invocations"),
