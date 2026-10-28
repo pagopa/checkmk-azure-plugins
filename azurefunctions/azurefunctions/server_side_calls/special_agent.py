@@ -21,6 +21,7 @@ def _agent_arguments(params, host_config):
         "--client-secret", params['client_secret'].unsafe(),
         "--appinsights-app-id", str(params['appinsights_app_id']),
         "--timedelta-kql", str(params['timedelta_kql']),
+        "--max-workers", str(params.get('max_workers', 8)),
     ]
 
     if params.get('proxy', None):

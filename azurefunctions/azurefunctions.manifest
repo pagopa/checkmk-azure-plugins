@@ -2,6 +2,7 @@
  'description': 'Monitor Azure Functions execution',
  'download_url': 'https://github.com/pagopa/checkmk-azure-functionapp/releases/latest',
  'files': {'cmk_addons_plugins': ['azurefunctions/agent_based/azurefunctions.py',
+                                  'azurefunctions/lib/ncrontab.py',
                                   'azurefunctions/libexec/agent_azurefunctions',
                                   'azurefunctions/rulesets/special_agent.py',
                                   'azurefunctions/server_side_calls/special_agent.py']},

@@ -21,13 +21,24 @@ That output will be then taken by the agent_based/azuremonitor.py.
 """
 
 import argparse
-from datetime import timedelta
 import json
-import os
+import math
+import time
 
-from azure.identity import ClientSecretCredential
-from azure.monitor.query import LogsQueryClient
-from azure.monitor.query import LogsQueryStatus
+try:
+    from cmk_addons.plugins.azurecommon.lib.client import AzureClient, AzureError
+    from cmk_addons.plugins.azurecommon.lib.credentials import (
+        AutoProvider, AzureCliProvider, ServicePrincipalProvider, TokenProvider,
+    )
+except ModuleNotFoundError as exc:
+    if not exc.name or not (
+        exc.name == "cmk_addons" or exc.name.startswith("cmk_addons.")
+    ):
+        raise
+    raise SystemExit(
+        "Missing dependency: install or upgrade the 'azurecommon' MKP "
+        "on this Checkmk site before running azuremonitor."
+    ) from exc
 
 #
 # parse cli arguments
@@ -36,19 +47,19 @@ from azure.monitor.query import LogsQueryStatus
 parser = argparse.ArgumentParser("agent_azuremonitor")
 parser.add_argument(
     '--tenant-id',
-    required=True,
+    required=False,
     type=str,
     help='Azure Tenant ID',
 )
 parser.add_argument(
     '--client-id',
-    required=True,
+    required=False,
     type=str,
     help='Client ID of the Azure service principal',
 )
 parser.add_argument(
     '--client-secret',
-    required=True,
+    required=False,
     type=str,
     help='Client secret of the Azure service principal',
 )
@@ -91,7 +102,22 @@ parser.add_argument(
     default=None,
     help='Proxy requests to Azure Monitor, for example https://my.proxy:8080',
 )
+parser.add_argument(
+    '--credential-provider',
+    choices=('service-principal', 'az-cli', 'auto'),
+    default='service-principal',
+    help='Authentication provider (default: service-principal)',
+)
+parser.add_argument(
+    '--total-timeout',
+    type=float,
+    default=300,
+    help='Overall Azure collection budget in seconds (default: 300)',
+)
 args = parser.parse_args()
+if not math.isfinite(args.total_timeout) or args.total_timeout <= 0:
+    parser.error("--total-timeout must be finite and positive")
+deadline = time.monotonic() + args.total_timeout
 
 tenant_id = args.tenant_id
 client_id = args.client_id
@@ -99,7 +125,7 @@ client_secret = args.client_secret
 resource_id = args.resource_id
 # this is because we replaced newline with this placeholder in rulesets
 kusto_query = args.query.replace('___cmk_azuremonitor_newline___', '\n')
-timespan = timedelta(seconds=int(args.timedelta_seconds))
+timespan = f"PT{int(args.timedelta_seconds)}S"
 count_warn = args.count_warn
 count_crit = args.count_crit
 proxy = args.proxy
@@ -108,46 +134,41 @@ proxy = args.proxy
 # login and execute log analytics workspace query
 #
 
-if proxy:
-    # set proxy via environment:
-    # https://learn.microsoft.com/en-us/azure/developer/python/sdk/azure-sdk-configure-proxy?tabs=bash#set-in-python-code
-    # seem to work the "per client" method in the docs above does not
-    # work for LogsQueryClient
-    os.environ["HTTP_PROXY"] = proxy
-    os.environ["HTTPS_PROXY"] = proxy
-
-credential = ClientSecretCredential(
-    tenant_id=tenant_id,
-    client_id=client_id,
-    client_secret=client_secret,
+credential: TokenProvider
+if args.credential_provider == 'az-cli':
+    credential = AzureCliProvider(proxy=proxy)
+elif args.credential_provider == 'auto':
+    credential = AutoProvider(tenant_id, client_id, client_secret, proxy=proxy)
+else:
+    if not all((tenant_id, client_id, client_secret)):
+        parser.error("--tenant-id, --client-id and --client-secret are required "
+                     "with service-principal authentication")
+    credential = ServicePrincipalProvider(tenant_id, client_id, client_secret)
+client = AzureClient(credential=credential, proxy=proxy, deadline=deadline)
+response = client.logs.post(
+    f"/v1{resource_id}/query",
+    payload={"query": kusto_query, "timespan": timespan},
 )
-proxies = {
-    'http': proxy,
-    'https': proxy,
-} if proxy else None
-client = LogsQueryClient(credential, proxies=proxies)
-response = client.query_resource(resource_id, kusto_query, timespan=timespan)
 
-if response.status != LogsQueryStatus.SUCCESS:
-    raise Exception("Unknown error querying log analytics workspace")
+if "error" in response:
+    raise AzureError(
+        f"Log Analytics query failed: {json.dumps(response['error'])}",
+        details=response["error"],
+    )
 
 #
 # process response
 #
 
-if response.tables:
-    # table has properties: "columns" (list of column names) and
-    #  "rows" (list, each row is a log, each log is a list with same
-    #  indexing as "columns")
-
-    # let's assume table is one? probably multiple is for batch
-    table = response.tables[0]
-
-    # list whose elements are a string json representation of the log entry
+tables = response["tables"]
+if not isinstance(tables, list):
+    raise AzureError("Invalid Log Analytics response: expected a list of tables")
+if tables:
+    table = tables[0]
+    columns = [column["name"] for column in table["columns"]]
     logs = [
-        json.dumps({table.columns[i]: row[i]
-                    for i in range(len(row))},
-                   default=str) for row in table.rows
+        json.dumps(dict(zip(columns, row, strict=True)), default=str)
+        for row in table["rows"]
     ]
 else:
     logs = []

@@ -17,15 +17,26 @@ That output will be then taken by the agent_based/azurefunctions.py.
 """
 
 import argparse
-import asyncio
+from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait
 import json
-import logging
-import os
+import math
+import time
+from urllib.parse import quote
 
-from azure.identity.aio import ClientSecretCredential
-from azure.identity.aio import AzureCliCredential
-from azure.mgmt.web.aio import WebSiteManagementClient
-import aiohttp
+try:
+    from cmk_addons.plugins.azurecommon.lib.client import AzureClient, AzureError
+    from cmk_addons.plugins.azurecommon.lib.credentials import (
+        AutoProvider, AzureCliProvider, ServicePrincipalProvider, TokenProvider,
+    )
+except ModuleNotFoundError as exc:
+    if not exc.name or not (
+        exc.name == "cmk_addons" or exc.name.startswith("cmk_addons.")
+    ):
+        raise
+    raise SystemExit(
+        "Missing dependency: install or upgrade the 'azurecommon' MKP "
+        "on this Checkmk site before running azurefunctions."
+    ) from exc
 
 #
 # parse cli arguments
@@ -82,74 +93,126 @@ parser.add_argument(
     help='Proxy requests, for example https://my.proxy:8080',
 )
 parser.add_argument(
+    '--max-workers',
+    type=int,
+    default=8,
+    help='Maximum concurrent Function App discovery requests (default: 8, minimum: 1)',
+)
+parser.add_argument(
+    '--total-timeout',
+    type=float,
+    default=300,
+    help='Overall Azure collection budget in seconds (default: 300)',
+)
+auth = parser.add_mutually_exclusive_group()
+auth.add_argument(
+    '--credential-provider',
+    choices=('service-principal', 'az-cli', 'auto'),
+    default='service-principal',
+    help='Authentication provider (default: service-principal)',
+)
+auth.add_argument(
     '--use-cli-credentials',
     required=False,
-    default=False,
-    action='store_true',
+    dest='credential_provider',
+    action='store_const',
+    const='az-cli',
     help='Debug for local development with Az CLI credentials',
 )
 args = parser.parse_args()
+if args.max_workers < 1:
+    parser.error("--max-workers must be at least 1")
+if not math.isfinite(args.total_timeout) or args.total_timeout <= 0:
+    parser.error("--total-timeout must be finite and positive")
+deadline = time.monotonic() + args.total_timeout
 
 #
 # login and execute log analytics workspace query
 #
 
-if args.proxy:
-    # set proxy via environment:
-    # https://learn.microsoft.com/en-us/azure/developer/python/sdk/azure-sdk-configure-proxy?tabs=bash#set-in-python-code
-    os.environ["HTTP_PROXY"] = args.proxy
-    os.environ["HTTPS_PROXY"] = args.proxy
-    proxy = args.proxy
+credential: TokenProvider
+if args.credential_provider == 'az-cli':
+    credential = AzureCliProvider(proxy=args.proxy)
+elif args.credential_provider == 'auto':
+    credential = AutoProvider(
+        args.tenant_id, args.client_id, args.client_secret, proxy=args.proxy,
+    )
 else:
-    proxy = None
+    if not all((args.tenant_id, args.client_id, args.client_secret)):
+        parser.error("--tenant-id, --client-id and --client-secret are required "
+                     "with service-principal authentication")
+    credential = ServicePrincipalProvider(
+        args.tenant_id, args.client_id, args.client_secret,
+    )
+client = AzureClient(credential=credential, proxy=args.proxy, deadline=deadline)
 
-if args.use_cli_credentials:
-    credential = AzureCliCredential()
-else:
-    credential = ClientSecretCredential(
-        tenant_id=args.tenant_id,
-        client_id=args.client_id,
-        client_secret=args.client_secret,
+
+def remaining_budget():
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise AzureError("Azure Functions collection deadline exceeded")
+    return remaining
+
+
+def run_concurrent(tasks, max_workers):
+    pool = ThreadPoolExecutor(max_workers=max_workers)
+    successful = False
+    try:
+        futures = []
+        for task in tasks:
+            remaining_budget()
+            futures.append(pool.submit(task))
+        done, pending = wait(
+            futures, timeout=remaining_budget(), return_when=FIRST_EXCEPTION,
+        )
+        for future in done:
+            if future.exception() is not None:
+                future.result()
+        if pending:
+            raise AzureError("Azure Functions collection deadline exceeded")
+        results = [future.result() for future in futures]
+        remaining_budget()
+        successful = True
+        return results
+    finally:
+        if not successful:
+            client.cancel()
+        pool.shutdown(wait=False, cancel_futures=True)
+
+
+def discover_functions():
+    sites_path = (
+        f"/subscriptions/{quote(args.subscription_id, safe='')}"
+        f"/resourceGroups/{quote(args.resource_group, safe='')}"
+        "/providers/Microsoft.Web/sites"
     )
 
+    def list_functions(app):
+        functions = client.web.get_paged(
+            f"{sites_path}/{quote(app['name'], safe='')}/functions",
+        )
+        specs = []
+        for function in functions:
+            config = function["properties"]["config"]
+            binding = config["bindings"][0]
+            specs.append({
+                "name": config.get("name") or function["name"].rsplit("/", 1)[-1],
+                "type": binding["type"],
+                "schedule": binding.get("schedule"),
+            })
+        return app["name"], specs
 
-async def discover_functions():
-    funcconf = {}
-    rg = args.resource_group
-    async with WebSiteManagementClient(credential,
-                                       args.subscription_id) as web_mgmt:
-
-        async def _list_funcs_in_app(app):
-            funcs = web_mgmt.web_apps.list_functions(
-                resource_group_name=rg,
-                name=app.name,
-            )
-            return app.name, [
-                {
-                    # name of the function in the function app
-                    "name": func.config.get("name"),
-                    # type of function (timerTrigger, httpTrigger)
-                    "type": func.config.get("bindings")[0].get("type"),
-                    # cron expression (if timerTrigger)
-                    "schedule": func.config.get("bindings")[0].get("schedule"),
-                } async for func in funcs
-            ]
-
-        funcapps = [
-            app async for app in web_mgmt.web_apps.list_by_resource_group(rg)
-            if "functionapp" in app.kind.split(",")
-        ]
-
-        tasks = (_list_funcs_in_app(app) for app in funcapps)
-        funcs = await asyncio.gather(*tasks)
-
-    for func in funcs:
-        funcconf[func[0]] = func[1]
-
-    return funcconf
+    apps = [
+        app for app in client.web.get_paged(sites_path)
+        if "functionapp" in (app.get("kind") or "").lower().split(",")
+    ]
+    return dict(run_concurrent(
+        (lambda app=app: list_functions(app) for app in apps),
+        max_workers=args.max_workers,
+    ))
 
 
-async def query_appinsights():
+def query_appinsights():
     query = f"""requests
     | extend altFuncName = tostring(customDimensions["faas.name"])
     | project
@@ -170,52 +233,40 @@ async def query_appinsights():
     | order by timestamp desc
     """
 
-    appinsights_baseurl = 'https://api.applicationinsights.io'
-    token = await credential.get_token(f'{appinsights_baseurl}/.default')
-    headers = {'Authorization': f'Bearer {token.token}'}
-    params = {"query": query}
-    url = f'{appinsights_baseurl}/v1/apps/{args.appinsights_app_id}/query'
+    logs = client.appinsights.get(
+        f"/v1/apps/{quote(args.appinsights_app_id, safe='')}/query",
+        params={"query": query},
+    )
+    if "error" in logs:
+        raise AzureError(
+            f"Application Insights query failed: {json.dumps(logs['error'])}",
+            details=logs["error"],
+        )
 
-    try:
-        async with aiohttp.ClientSession(headers=headers) as session:
-            async with session.get(url, params=params, proxy=proxy) as resp:
-                resp.raise_for_status()
-                logs = await resp.json()
-    except Exception as e:
-        try:
-            errmsg = "error: " + json.dumps(logs.get('error', {}))
-        except Exception:
-            errmsg = "error: %s - %s" % (type(e).__name__, str(e))
-        raise Exception(errmsg) from e
-
+    tables = logs["tables"]
+    if not isinstance(tables, list):
+        raise AzureError("Invalid Application Insights response: expected a list of tables")
+    if not tables:
+        return []
     log_lines_json = []
-    cols = [c['name'] for c in logs['tables'][0]['columns']]
-    for row in logs['tables'][0]['rows']:
-        structured = dict(zip(cols, row))
+    cols = [c['name'] for c in tables[0]['columns']]
+    for row in tables[0]['rows']:
+        structured = dict(zip(cols, row, strict=True))
         log_lines_json.append(structured)
     return log_lines_json
 
 
-async def main():
-    res = await asyncio.gather(
-        discover_functions(),
-        query_appinsights(),
+def main():
+    disc, logs = run_concurrent(
+        (discover_functions, query_appinsights), max_workers=2,
     )
-    disc = res[0]
-    logs = res[1]
     print('<<<azurefunctions:sep(0)>>>')
     print(json.dumps(disc))
     for log in logs:
         print(json.dumps(log))
-    await credential.close()
 
 
 if __name__ == "__main__":
-    # if aiohttp logs to stdout, it will break check output
-    logging.basicConfig(level=logging.ERROR)
-    for logger in ['asyncio', 'aiohttp.client', 'aiohttp.internal']:
-        logging.getLogger(logger).setLevel(logging.ERROR)
-
-    asyncio.run(main())
+    main()
 
 # next step: output is parsed and interpreted by agent_based/azurefunctions.py

@@ -14,9 +14,11 @@ server_side_calls/special_agent.py
 from cmk.rulesets.v1.form_specs import Dictionary
 from cmk.rulesets.v1.form_specs import DictElement
 from cmk.rulesets.v1.form_specs import Integer
+from cmk.rulesets.v1.form_specs import DefaultValue
 from cmk.rulesets.v1.form_specs import String
 from cmk.rulesets.v1.form_specs import Password
 from cmk.rulesets.v1.form_specs import migrate_to_password
+from cmk.rulesets.v1.form_specs.validators import NumberInRange
 from cmk.rulesets.v1.rule_specs import SpecialAgent
 from cmk.rulesets.v1.rule_specs import Topic
 from cmk.rulesets.v1.rule_specs import Help
@@ -88,6 +90,19 @@ def _formspec():
                     help_text=Help(
                         "Time delta in the past to query in App Insights. "
                         "Expressed as KQL expression. Examples: 1d, 8.5h, 9m"),
+                ),
+            ),
+            "max_workers":
+            DictElement(
+                required=False,
+                parameter_form=Integer(
+                    title=Title("Function discovery workers"),
+                    help_text=Help(
+                        "Maximum concurrent Function App requests during discovery. "
+                        "Defaults to 8 when not configured. The App Insights query "
+                        "runs independently."),
+                    prefill=DefaultValue(8),
+                    custom_validate=[NumberInRange(min_value=1)],
                 ),
             ),
             "proxy":
