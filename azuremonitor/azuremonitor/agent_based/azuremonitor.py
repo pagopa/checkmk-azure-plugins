@@ -5,8 +5,6 @@ from cmk.agent_based.v2 import CheckPlugin
 from cmk.agent_based.v2 import Service
 from cmk.agent_based.v2 import Result
 from cmk.agent_based.v2 import State
-from cmk.utils import debug
-from pprint import pprint
 import traceback
 from itertools import chain
 
@@ -36,9 +34,6 @@ def parse_azuremonitor(string_table):
             'error': None,
         }
 
-        if debug.enabled():
-            pprint(string_table)
-            pprint(parsed)
     except Exception as e:
         parsed = {
             'logs': [f'parsing failed: {e}'],

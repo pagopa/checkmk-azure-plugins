@@ -105,20 +105,42 @@ class TimerCheckTests(unittest.TestCase):
         api.Result = lambda **kwargs: SimpleNamespace(**kwargs)
         api.State = SimpleNamespace(OK=0, WARN=1, CRIT=2, UNKNOWN=3)
         api.check_levels = Mock(return_value=())
-        modules["cmk.utils"].debug = SimpleNamespace(enabled=lambda: False)
         modules["cmk_addons.plugins.azurefunctions.lib.ncrontab"] = ncrontab
+        self.modules = modules
         path = (
             Path(__file__).resolve().parents[1]
             / "azurefunctions/azurefunctions/agent_based/azurefunctions.py"
         )
         with patch.dict(sys.modules, modules):
-            self.check = runpy.run_path(str(path))["_check_scheduled_invocations"]
+            self.plugin = runpy.run_path(str(path))
+        self.check = self.plugin["_check_scheduled_invocations"]
         self.clock = Mock(wraps=datetime)
         self.clock.now.return_value = utc("2026-10-28T10:35:27")
 
     def check_results(self, schedule, logs):
         with patch.dict(self.check.__globals__, {"datetime": self.clock}):
             return list(self.check({"schedule": schedule}, logs))
+
+    def test_functions_parser_without_internal_debug_module(self):
+        parse = self.plugin["parse_azurefunctions"]
+        self.assertEqual(parse([['{"app": []}'], ['{"success": "True"}']]), {
+            "apps": {"app": []},
+            "logs": [{"success": "True"}],
+            "error": None,
+        })
+        self.assertIsNotNone(parse([["invalid json"]])["error"])
+
+    def test_monitor_parser_without_internal_debug_module(self):
+        path = (
+            Path(__file__).resolve().parents[1]
+            / "azuremonitor/azuremonitor/agent_based/azuremonitor.py"
+        )
+        with patch.dict(sys.modules, self.modules):
+            parse = runpy.run_path(str(path))["parse_azuremonitor"]
+        self.assertEqual(parse([["1"], ["2"], ["log entry"]]), {
+            "logs": ["log entry"], "count_warn": 1, "count_crit": 2, "error": None,
+        })
+        self.assertIsNotNone(parse([])["error"])
 
     def test_successful_scheduled_invocation(self):
         results = self.check_results("0 */5 * * * *", [{

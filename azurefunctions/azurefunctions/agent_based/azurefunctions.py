@@ -6,8 +6,6 @@ from cmk.agent_based.v2 import Service
 from cmk.agent_based.v2 import Result
 from cmk.agent_based.v2 import State
 from cmk.agent_based.v2 import check_levels
-from cmk.utils import debug
-from pprint import pprint
 import json
 import traceback
 from itertools import chain
@@ -34,9 +32,6 @@ def parse_azurefunctions(string_table):
             'error': None,
         }
 
-        if debug.enabled():
-            pprint(string_table)
-            pprint(parsed)
     except Exception as e:
         parsed = {
             'apps': {},
