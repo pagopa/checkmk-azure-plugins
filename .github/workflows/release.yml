@@ -55,6 +55,7 @@ jobs:
       fail-fast: false
       matrix:
         plugin:
+          - azurecommon
           - azuremonitor
           - azurefunctions
 
@@ -114,4 +115,3 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release upload "$RELEASE_TAG" ".packages/$PLUGIN-$RELEASE_VERSION.mkp"
-

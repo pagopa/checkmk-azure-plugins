@@ -13,7 +13,7 @@ import traceback
 from itertools import chain
 from datetime import datetime, timezone
 
-from croniter import croniter
+from cmk_addons.plugins.azurefunctions.lib.ncrontab import previous_occurrence
 
 
 def parse_azurefunctions(string_table):
@@ -99,8 +99,15 @@ def _check_scheduled_invocations(funcspec, funclogs):
 
     funccron = funcspec['schedule']
     now = datetime.now(timezone.utc)
-    itr = croniter(funccron, now, second_at_beginning=True)
-    schedule = itr.get_prev(datetime)
+    try:
+        schedule = previous_occurrence(funccron, now)
+    except ValueError as error:
+        yield Result(
+            state=State.UNKNOWN,
+            summary="Invalid or unsupported timer schedule",
+            details=f"Schedule: {funccron!r}: {error}",
+        )
+        return
 
     duration_accu = 0
     nfailures = 0
