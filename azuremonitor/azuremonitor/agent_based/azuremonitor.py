@@ -5,32 +5,25 @@ from cmk.agent_based.v2 import CheckPlugin
 from cmk.agent_based.v2 import Service
 from cmk.agent_based.v2 import Result
 from cmk.agent_based.v2 import State
+import json
 import traceback
-from itertools import chain
 
 
 def parse_azuremonitor(string_table):
-    # string_table is a list of lists, each inner list is one line of
-    # the stdout in ../libexec/agent_azuremonitor
-
-    def _safe_parse_int(s, default=0):
-        try:
-            return int(s)
-        except Exception:
-            return default
-
+    # string_table with sep(0) contains only 1 json row
+    # [['{"count_warn": 1, "count_crit": 2, ...}']]
     try:
-        # flatten the list because it has every element wrapped in another list
-        input_list = list(chain.from_iterable(string_table))
+        if not string_table or not string_table[0]:
+            raise ValueError("No data from agent")
 
-        count_warn_str = input_list[0]
-        count_crit_str = input_list[1]
-        logs = input_list[2:]
+        raw_json = string_table[0][0]
+        data = json.loads(raw_json)
 
         parsed = {
-            'logs': logs,
-            'count_warn': _safe_parse_int(count_warn_str, 1),
-            'count_crit': _safe_parse_int(count_crit_str, 1),
+            'logs': data.get('logs', []),
+            'count_warn': int(data.get('count_warn', 1)),
+            'count_crit': int(data.get('count_crit', 1)),
+            'custom_summary': data.get('custom_summary', ''),
             'error': None,
         }
 
@@ -39,6 +32,7 @@ def parse_azuremonitor(string_table):
             'logs': [f'parsing failed: {e}'],
             'count_warn': 0,
             'count_crit': 0,
+            'custom_summary': 'Internal parsing error',
             'error': traceback.format_exc(),
         }
 
@@ -54,9 +48,10 @@ def check_azuremonitor(section):
         logs = section['logs']
         count_warn = section['count_warn']
         count_crit = section['count_crit']
+        custom_summary = section['custom_summary']
 
         numlogs = len(logs)
-        logs_summary = f"Query retrieved {numlogs} logs"
+        logs_summary = custom_summary.replace('{numlogs}', str(numlogs))
 
         if section['error']:
             yield Result(

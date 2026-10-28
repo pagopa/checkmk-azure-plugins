@@ -96,6 +96,13 @@ parser.add_argument(
     help='Number of log records found that should issue a critical alert',
 )
 parser.add_argument(
+    '--custom-summary',
+    required=False,
+    type=str,
+    default='Query retrieved {numlogs} logs',
+    help='Message to show in summary. Use "{numlogs}" placeholder for n logs',
+)
+parser.add_argument(
     '--proxy',
     required=False,
     type=str,
@@ -128,6 +135,7 @@ kusto_query = args.query.replace('___cmk_azuremonitor_newline___', '\n')
 timespan = f"PT{int(args.timedelta_seconds)}S"
 count_warn = args.count_warn
 count_crit = args.count_crit
+custom_summary = args.custom_summary
 proxy = args.proxy
 
 #
@@ -174,14 +182,14 @@ else:
     logs = []
 
 # print plugin output to stdout
-#
 
+output_data = {
+    "count_warn": args.count_warn,
+    "count_crit": args.count_crit,
+    "custom_summary": args.custom_summary,
+    "logs": logs,
+}
 print('<<<azuremonitor:sep(0)>>>')
-print(args.count_warn)
-print('<<<azuremonitor:sep(1)>>>')
-print(args.count_crit)
-print('<<<azuremonitor:sep(2)>>>')
-for log in logs:
-    print(log)
+print(json.dumps(output_data))
 
 # next step: output is parsed and interpreted by agent_based/azuremonitor.py

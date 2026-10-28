@@ -114,6 +114,17 @@ def _formspec():
                     ),
                 ),
             ),
+            "custom_summary":
+            DictElement(
+                required=True,
+                parameter_form=String(
+                    title=Title("Custom summary message"),
+                    help_text=Help(
+                        "Message to show in summary. "
+                        'Use "{numlogs}" placeholder for n logs'
+                    ),
+                ),
+            ),
             "proxy":
             DictElement(
                 required=False,
